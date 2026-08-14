@@ -2,6 +2,7 @@ from flask import Flask, jsonify, request
 from google import genai
 import os
 import logging
+import time
 from dotenv import load_dotenv
 
 # Configure logging - saves logs to a file called app.log
@@ -39,6 +40,22 @@ def not_found(e):
 def server_error(e):
     return jsonify({"error": "Something went wrong on the server"}), 500
 
+# Helper function: calls Gemini AI with automatic retry on failure
+def call_ai_with_retry(prompt, max_retries=3):
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.5-flash-lite",
+                contents=prompt
+            )
+            return response.text
+        except Exception as e:
+            logging.warning(f"AI call attempt {attempt} failed: {str(e)}")
+            if attempt < max_retries:
+                time.sleep(2)  # wait 2 seconds before retrying
+            else:
+                raise e  # if all retries fail, raise the error
+
 # Route to analyze error logs using AI
 @app.route('/analyze-error', methods=['POST'])
 def analyze_error():
@@ -53,19 +70,16 @@ def analyze_error():
 
     try:
         prompt = f"You are a DevOps expert. Analyze this error log and explain the likely cause and a fix in 3-4 short sentences:\n\n{error_log}"
-        response = client.models.generate_content(
-            model="gemini-3.5-flash-lite",
-            contents=prompt
-        )
+        ai_result = call_ai_with_retry(prompt)
 
         logging.info("AI analysis successful")
         return jsonify({
             "original_error": error_log,
-            "ai_analysis": response.text
+            "ai_analysis": ai_result
         }), 200
 
     except Exception as e:
-        logging.error(f"AI analysis failed: {str(e)}")
+        logging.error(f"AI analysis failed after retries: {str(e)}")
         return jsonify({"error": f"AI analysis failed: {str(e)}"}), 500
 
 if __name__ == '__main__':
